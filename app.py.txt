@@ -1,0 +1,66 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+# --- Dashboard Layout ---
+st.set_page_config(page_title="USA AI Stock Advisor", layout="centered")
+st.title("📈 USA AI Stock Advisor")
+st.markdown("Automated trend analysis using Linear Regression AI.")
+
+# --- Input ---
+ticker_input = st.text_input("Enter Ticker Symbol (e.g., NVDA, AAPL, TSLA)", "AAPL")
+
+if ticker_input:
+    try:
+        # Haal data op van Yahoo Finance
+        data = yf.download(ticker_input, period="60d", interval="1d")
+
+        if data.empty:
+            st.error("No data found. Please check the ticker symbol.")
+        else:
+            # Huidige prijs (laatste geldige sluitingsprijs)
+            current_price = float(data['Close'].iloc[-1])
+
+            # --- AI LOGIC: Linear Regression ---
+            # Data voorbereiden
+            y = data['Close'].values.reshape(-1, 1)
+            X = np.array(range(len(y))).reshape(-1, 1)
+
+            # Model trainen
+            model = LinearRegression()
+            model.fit(X, y)
+
+            # Voorspel de prijs voor de volgende stap (morgen)
+            next_day = np.array([[len(y)]])
+            target_price = float(model.predict(next_day)[0][0])
+
+            # --- Berekeningen ---
+            stop_loss = current_price * 0.95
+            move_pct = ((target_price - current_price) / current_price) * 100
+
+            # --- Dashboard Weergave ---
+            st.divider()
+            
+            col1, col2 = st.columns(2)
+            col1.metric("Current Price", f"${current_price:.2f}")
+            col2.metric("AI Target Price", f"${target_price:.2f}", f"{move_pct:.2f}%")
+
+            st.write(f"**Stop Loss Price (5%):** :red[${stop_loss:.2f}]")
+
+            # Advies Logica
+            if move_pct > 1.5:
+                st.success("ADVICE: BUY")
+            elif move_pct < -1.5:
+                st.error("ADVICE: SELL")
+            else:
+                st.warning("ADVICE: HOLD")
+
+            # Grafiek ter ondersteuning
+            st.line_chart(data['Close'])
+
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
+
+st.caption("Disclaimer: This is AI-generated analysis based on mathematical trends.")
