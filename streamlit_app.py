@@ -4,83 +4,66 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-# Setup
-st.set_page_config(page_title="AI Stock Advisor", layout="wide")
-st.title("📈 AI Market Advisor & Scanner")
+# --- Dashboard Layout ---
+st.set_page_config(page_title="USA AI Stock Advisor", layout="centered")
+st.title("📈 USA AI Stock Advisor")
+st.markdown("Automated trend analysis with % Target & Stop Loss.")
 
-# --- AI Logica ---
-def get_analysis(ticker):
+# --- Input ---
+ticker_input = st.text_input("Enter Ticker Symbol (e.g., NVDA, AAPL, TSLA)", "AAPL").upper()
+
+if ticker_input:
     try:
-        data = yf.download(ticker, period="60d", interval="1d", progress=False)
-        if data.empty: return None
-        
-        current_price = float(data['Close'].iloc[-1])
-        
-        # Eenvoudige AI Trend
-        y = data['Close'].values.reshape(-1, 1)
-        X = np.array(range(len(y))).reshape(-1, 1)
-        model = LinearRegression().fit(X, y)
-        prediction = float(model.predict(np.array([[len(y)]]))[0][0])
-        
-        # Volatiliteit (ATR-stijl) voor Target & Stop
-        daily_range = (data['High'] - data['Low']).mean()
-        target = current_price + (daily_range * 2.5)
-        stop = current_price - (daily_range * 1.5)
-        
-        # Score
-        score = 0
-        if prediction > current_price: score += 1
-        if current_price > data['Close'].mean(): score += 1
-        
-        status = "BUY" if score >= 1 else "HOLD"
-        if prediction < current_price * 0.98: status = "SELL"
-        
-        return {
-            "ticker": ticker, "price": current_price, "target": target, 
-            "stop": stop, "score": score, "status": status, "data": data
-        }
-    except:
-        return None
+        # Haal data op
+        data = yf.download(ticker_input, period="60d", interval="1d", progress=False)
 
-# --- Sidebar ---
-st.sidebar.header("Scanner")
-watchlist_input = st.sidebar.text_area("Watchlist (tickers gescheiden door komma)", "AAPL, TSLA, NVDA, AMD, BTC-USD")
-run_scan = st.sidebar.button("Start Scanner")
+        if data.empty:
+            st.error("No data found. Please check the ticker symbol.")
+        else:
+            # Huidige prijs
+            current_price = float(data['Close'].iloc[-1])
 
-# --- Main Layout ---
-col_main, col_side = st.columns([2, 1])
+            # --- AI LOGIC: Linear Regression ---
+            y = data['Close'].values.reshape(-1, 1)
+            X = np.array(range(len(y))).reshape(-1, 1)
 
-with col_main:
-    ticker_input = st.text_input("Voer Ticker in voor Analyse", "AAPL").upper()
-    res = get_analysis(ticker_input)
-    
-    if res:
-        st.subheader(f"Analyse voor {ticker_input}")
-        
-        # De vertrouwde statistieken
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Huidige Prijs", f"${res['price']:.2f}")
-        c2.metric("AI Target", f"${res['target']:.2f}")
-        c3.metric("Stop Loss", f"${res['stop']:.2f}")
-        
-        st.write(f"**AI Score:** {res['score']} | **Advies:** {res['status']}")
-        
-        # De werkende grafiek
-        st.line_chart(res['data']['Close'])
+            model = LinearRegression()
+            model.fit(X, y)
 
-with col_side:
-    if run_scan:
-        st.subheader("Scanner Resultaten")
-        tickers = [t.strip().upper() for t in watchlist_input.split(",")]
-        scan_data = []
-        for t in tickers:
-            s = get_analysis(t)
-            if s:
-                scan_data.append({"Ticker": t, "Prijs": f"${s['price']:.2f}", "Advies": s['status']})
-        
-        st.table(pd.DataFrame(scan_data))
-    else:
-        st.write("Klik op 'Start Scanner' in de zijbalk om je watchlist te controleren.")
+            # Voorspel de prijs voor morgen
+            next_day = np.array([[len(y)]])
+            predicted_price = float(model.predict(next_day)[0][0])
+
+            # --- Berekeningen in % ---
+            stop_loss_pct = 5.0  # Vaste stop loss van 5%
+            stop_loss_price = current_price * (1 - (stop_loss_pct / 100))
+            
+            target_move_pct = ((predicted_price - current_price) / current_price) * 100
+
+            # --- Dashboard Weergave ---
+            st.divider()
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Current Price", f"${current_price:.2f}")
+            col2.metric("AI Target (%)", f"{target_move_pct:.2f}%", f"${predicted_price:.2f}")
+            col3.metric("Stop Loss (5%)", f"-{stop_loss_pct}%", f"${stop_loss_price:.2f}", delta_color="inverse")
+
+            # Advies Logica
+            st.write("---")
+            if target_move_pct > 1.5:
+                st.success(f"ADVICE: BUY (Target: ${predicted_price:.2f})")
+            elif target_move_pct < -1.5:
+                st.error(f"ADVICE: SELL (Target: ${predicted_price:.2f})")
+            else:
+                st.warning("ADVICE: HOLD (Trend is neutral)")
+
+            # Grafiek
+            st.line_chart(data['Close'])
+
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
+
+st.caption("Disclaimer: This is AI-generated analysis based on mathematical trends.")
 
 
 
