@@ -5,112 +5,79 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 # --- Layout ---
-st.set_page_config(page_title="AI Stock Advisor", layout="centered")
-st.title("🛡️ Pro AI Stock Advisor")
-
-# --- Sidebar: Strategie Keuze ---
-strategy = st.sidebar.selectbox(
-    "Selecteer AI Methode",
-    ("Basis Trend", "Swingtrade", "Breakout Hunter", "Reversal Pick")
-)
+st.set_page_config(page_title="AI Multi-Strategy Dashboard", layout="centered")
+st.title("🛡️ AI Multi-Strategy Dashboard")
 
 ticker_input = st.text_input("Voer Ticker Symbool in", "AAPL").upper()
 
 if ticker_input:
     try:
-        # Haal data op
+        # 1. Haal data op
         data = yf.download(ticker_input, period="100d", interval="1d", progress=False)
 
-        if data is None or data.empty or len(data) < 30:
-            st.error("Niet genoeg data gevonden voor dit aandeel.")
+        if data is None or data.empty or len(data) < 50:
+            st.error("Niet genoeg data gevonden.")
         else:
-            # Data opschonen
-            data = data.copy()
-            data = data.dropna()
-            
-            # Prijs ophalen als enkel getal
+            data = data.copy().dropna()
             current_price = float(data['Close'].iloc[-1])
             
-            # --- AI Trend Berekening ---
+            # --- 2. ALLE STRATEGIE BEREKENINGEN (Achtergrond) ---
+            results = []
+
+            # A. BASIS TREND (Linear Regression)
             y = data['Close'].values.reshape(-1, 1)
             X = np.array(range(len(y))).reshape(-1, 1)
             model = LinearRegression().fit(X, y)
-            predicted_price = float(model.predict(np.array([[len(y)]]))[0][0])
-            
-            target_price = predicted_price
-            stop_loss_pct = 5.0
-            advice = "HOLD"
-            buy_reason = ""
+            pred = float(model.predict(np.array([[len(y)]]))[0][0])
+            status_basis = "BUY" if pred > current_price else "HOLD"
+            results.append({"Methode": "Basis Trend", "Advies": status_basis, "Target": f"${pred:.2f}"})
 
-            # --- STRATEGIE LOGICA ---
-            if strategy == "Basis Trend":
-                target_price = predicted_price
-                if target_price > current_price:
-                    advice = "BUY"
-                    buy_reason = "De AI trendlijn wijst op een opwaartse beweging."
-                else:
-                    advice = "HOLD"
+            # B. SWINGTRADE (RSI)
+            delta = data['Close'].diff()
+            up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
+            ema_up = up.ewm(com=13, adjust=False).mean()
+            ema_down = down.ewm(com=13, adjust=False).mean()
+            rsi = float(100 - (100 / (1 + (ema_up / ema_down).iloc[-1])))
+            status_swing = "BUY" if rsi < 45 else "HOLD"
+            results.append({"Methode": "Swingtrade", "Advies": status_swing, "Target": f"${(current_price * 1.08):.2f}"})
 
-            elif strategy == "Swingtrade":
-                # Super stabiele RSI berekening
-                delta = data['Close'].diff()
-                up = delta.clip(lower=0)
-                down = -1 * delta.clip(upper=0)
-                ema_up = up.ewm(com=13, adjust=False).mean()
-                ema_down = down.ewm(com=13, adjust=False).mean()
-                rs = ema_up / ema_down
-                rsi_value = float(100 - (100 / (1 + rs.iloc[-1])))
-                
-                target_price = current_price * 1.08
-                stop_loss_pct = 4.0
-                if rsi_value < 45:
-                    advice = "BUY"
-                    buy_reason = f"De RSI staat op {rsi_value:.1f} (Oversold). Dit wijst op een mogelijke opwaartse swing."
-                else:
-                    advice = "HOLD"
+            # C. BREAKOUT (20-day high)
+            recent_high = float(data['High'].iloc[-21:-1].max())
+            status_break = "BUY" if current_price >= recent_high else "HOLD"
+            results.append({"Methode": "Breakout", "Advies": status_break, "Target": f"${(recent_high * 1.15):.2f}"})
 
-            elif strategy == "Breakout Hunter":
-                recent_high = float(data['High'].iloc[-21:-1].max())
-                target_price = recent_high * 1.15
-                stop_loss_pct = 3.0
-                if current_price >= recent_high:
-                    advice = "BUY"
-                    buy_reason = f"De koers is door de 20-daagse weerstand van ${recent_high:.2f} gebroken."
-                else:
-                    advice = "HOLD"
+            # D. REVERSAL (SMA50)
+            sma50 = float(data['Close'].iloc[-50:].mean())
+            status_rev = "BUY" if current_price < (sma50 * 0.92) else "HOLD"
+            results.append({"Methode": "Reversal", "Advies": status_rev, "Target": f"${sma50:.2f}"})
 
-            elif strategy == "Reversal Pick":
-                sma50 = float(data['Close'].iloc[-50:].mean())
-                target_price = sma50
-                stop_loss_pct = 7.0
-                if current_price < (sma50 * 0.92):
-                    advice = "BUY"
-                    buy_reason = "De koers is overmatig gedaald ten opzichte van het 50-daags gemiddelde (Mean Reversion)."
-                else:
-                    advice = "HOLD"
-
-            # --- DISPLAY STATS ---
+            # --- 3. DISPLAY HOOFDSTATS ---
             col1, col2, col3 = st.columns(3)
             col1.metric("Huidige Prijs", f"${current_price:.2f}")
-            col2.metric("AI Target", f"${target_price:.2f}", f"{((target_price-current_price)/current_price)*100:.2f}%")
-            col3.metric("Stop Loss", f"-{stop_loss_pct}%", f"${current_price * (1 - (stop_loss_pct / 100)):.2f}")
-
-            st.divider()
-
-            # --- ADVIES EN UITLEG ---
-            if advice == "BUY":
-                st.success(f"**ADVIES: {advice}**")
-                st.write(f"👉 **Waarom kopen?** {buy_reason}")
-            else:
-                st.warning(f"**ADVIES: {advice}**")
-                st.write(f"De AI ziet voor de methode '{strategy}' momenteel geen koopsignaal.")
+            col2.metric("Basis AI Target", f"${pred:.2f}")
+            col3.metric("Stop Loss (5%)", f"${current_price * 0.95:.2f}")
 
             st.line_chart(data['Close'])
 
-    except Exception as e:
-        st.error(f"Fout bij berekening: {e}")
+            # --- 4. MULTI-STRATEGY SCOREBOARD ---
+            st.divider()
+            st.subheader("🚀 Strategie Scoreboard")
+            st.write("Bekijk hieronder het advies van alle AI-modellen voor dit aandeel:")
+            
+            # Maak een mooie tabel
+            df_results = pd.DataFrame(results)
+            
+            # Kleur de cellen voor extra duidelijkheid
+            def color_advice(val):
+                color = '#0ecb81' if val == 'BUY' else '#808080'
+                return f'color: {color}; font-weight: bold'
 
-st.caption("AI-analyse gebaseerd op historische data.")
+            st.table(df_results.style.applymap(color_advice, subset=['Advies']))
+
+    except Exception as e:
+        st.error(f"Fout bij analyse: {e}")
+
+st.caption("Alle berekeningen worden in real-time uitgevoerd op basis van de geselecteerde ticker.")
 
 
 
