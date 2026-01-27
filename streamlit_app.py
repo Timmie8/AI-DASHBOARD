@@ -4,36 +4,48 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-st.set_page_config(page_title="AI Market Hunter", layout="wide")
+st.set_page_config(page_title="AI Pro Scanner", layout="wide")
 
-# --- AI Logica Functie ---
-def analyze_swing_trade(ticker):
+# --- AI Analyse Functie ---
+def get_full_analysis(ticker):
     try:
         data = yf.download(ticker, period="100d", interval="1d", progress=False)
         if data.empty or len(data) < 30: return None
         
-        # RSI
+        # 1. RSI
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rsi = 100 - (100 / (1 + (gain / loss)))
         current_rsi = rsi.iloc[-1]
 
-        # Trend & ATR
+        # 2. AI Trend & Target
         current_price = float(data['Close'].iloc[-1])
         y = data['Close'].values.reshape(-1, 1)
         X = np.array(range(len(y))).reshape(-1, 1)
         model = LinearRegression().fit(X, y)
-        ai_target = float(model.predict(np.array([[len(y)]]))[0][0])
+        ai_pred = float(model.predict(np.array([[len(y)]]))[0][0])
         
+        # 3. ATR (Volatility) voor Stoploss
         high_low = data['High'] - data['Low']
         atr = high_low.rolling(14).mean().iloc[-1]
         
-        # Score
+        # Bereken realistische swing-doelen
+        real_target = current_price + (atr * 3) 
+        real_stop = current_price - (atr * 2)
+
+        # 4. Score Logica
         score = 0
-        if ai_target > current_price: score += 1
-        if current_rsi < 40: score += 2
-        elif current_rsi > 70: score -= 2
+        reasons = []
+        if ai_pred > current_price: 
+            score += 1
+            reasons.append("Trend: Up")
+        if current_rsi < 45: 
+            score += 2
+            reasons.append("RSI: Buy Zone")
+        elif current_rsi > 70: 
+            score -= 2
+            reasons.append("RSI: Overbought")
 
         status = "HOLD"
         if score >= 2: status = "STRONG BUY"
@@ -41,59 +53,72 @@ def analyze_swing_trade(ticker):
         elif score <= -1: status = "SELL"
 
         return {
-            "Ticker": ticker, "Signal": status, "Price": f"${current_price:.2f}",
-            "Target": f"${ai_target:.2f}", "RSI": round(current_rsi, 1),
-            "Stop": f"${(current_price - (atr*2)):.2f}"
+            "ticker": ticker, "status": status, "price": current_price,
+            "target": real_target, "stop": real_stop, "rsi": current_rsi,
+            "score": score, "reasons": reasons, "data": data
         }
     except:
         return None
 
-# --- SIDEBAR ---
-st.sidebar.header("⚙️ Control Panel")
-# Standaard lijst als de gebruiker niks invult
-default_list = "AAPL, TSLA, NVDA, AMD, MSFT, META, AMZN, GOOGL, NFLX, BTC-USD"
-user_list = st.sidebar.text_area("Watchlist (comma separated)", default_list)
+# --- SIDEBAR CONTROL ---
+st.sidebar.title("🎮 Dashboard Control")
+user_list = st.sidebar.text_area("Watchlist", "AAPL, TSLA, NVDA, AMD, MSFT, BTC-USD")
 tickers = [t.strip().upper() for t in user_list.split(",")]
-
-# DE START KNOP (Nu prominent in de sidebar)
-run_scan = st.sidebar.button("🚀 START AI SCANNER", use_container_width=True)
+start_scan = st.sidebar.button("🚀 RUN FULL MARKET SCAN")
 
 # --- MAIN PAGE ---
-st.title("🏹 AI Multi-Factor Swing Scanner")
+st.title("📊 AI Swing Trader & Scanner")
 
-if run_scan:
-    st.subheader("📊 Market Scan Results")
-    results = []
-    
-    # Voortgangsbalk
-    progress_bar = st.progress(0)
-    for i, t in enumerate(tickers):
-        res = analyze_swing_trade(t)
-        if res:
-            results.append(res)
-        progress_bar.progress((i + 1) / len(tickers))
-    
-    if results:
-        df = pd.DataFrame(results)
+# TABS voor overzicht
+tab_scan, tab_deep = st.tabs(["📡 Market Scanner", "🔍 Single Ticker Deep Dive"])
+
+with tab_scan:
+    if start_scan:
+        st.subheader("Live Scanner Results")
+        scan_results = []
+        progress = st.progress(0)
         
-        # Styling voor signalen
-        def color_signal(val):
-            if val == 'STRONG BUY': return 'background-color: #0ecb81; color: white'
-            if val == 'BUY': return 'color: #0ecb81'
-            if val == 'SELL': return 'color: #f6465d'
-            return ''
-
-        st.dataframe(df.style.applymap(color_signal, subset=['Signal']), use_container_width=True, height=500)
+        for i, t in enumerate(tickers):
+            analysis = get_full_analysis(t)
+            if analysis:
+                scan_results.append({
+                    "Ticker": t, "Signal": analysis['status'], "Price": f"${analysis['price']:.2f}",
+                    "Target": f"${analysis['target']:.2f}", "Stoploss": f"${analysis['stop']:.2f}",
+                    "RSI": round(analysis['rsi'], 1), "Score": analysis['score']
+                })
+            progress.progress((i + 1) / len(tickers))
+        
+        if scan_results:
+            df = pd.DataFrame(scan_results)
+            def color_sig(v):
+                if v == 'STRONG BUY': return 'background-color: #0ecb81; color: white'
+                if v == 'SELL': return 'color: #f6465d'
+                return ''
+            st.table(df.style.applymap(color_sig, subset=['Signal']))
     else:
-        st.error("No data could be retrieved. Check your tickers.")
-else:
-    st.info("👈 Enter your tickers in the sidebar and click 'START AI SCANNER' to begin.")
+        st.info("Gebruik de sidebar om de scanner te starten.")
 
-# Individuele check onderaan
-st.divider()
-st.subheader("🔍 Single Ticker Deep Dive")
-single_t = st.text_input("Enter one ticker for chart", "TSLA").upper()
-if st.button("Show Chart"):
-    st.line_chart(yf.download(single_t, period="100d")['Close'])
+with tab_deep:
+    col_l, col_r = st.columns([1, 2])
+    with col_l:
+        ticker_select = st.text_input("Enter Ticker", "TSLA").upper()
+        btn_analyze = st.button("Analyze Now")
+    
+    if btn_analyze:
+        res = get_full_analysis(ticker_select)
+        if res:
+            # Stats Display
+            st.divider()
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Current Price", f"${res['price']:.2f}")
+            m2.metric("AI Swing Target", f"${res['target']:.2f}", delta=f"{(res['target']-res['price']):.2f}")
+            m3.metric("Smart Stoploss", f"${res['stop']:.2f}", delta=f"{(res['stop']-res['price']):.2f}", delta_color="inverse")
+            
+            # Score en Signal
+            st.subheader(f"Signal: {res['status']} (Score: {res['score']})")
+            st.write(f"**Reasons:** {', '.join(res['reasons'])}")
+            
+            # Chart
+            st.line_chart(res['data']['Close'])
 
 
