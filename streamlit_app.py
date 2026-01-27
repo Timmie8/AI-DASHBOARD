@@ -4,104 +4,96 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-st.set_page_config(page_title="AI Swing Trader", layout="wide")
+st.set_page_config(page_title="AI Market Hunter", layout="wide")
 
+# --- AI Logica Functie ---
 def analyze_swing_trade(ticker):
     try:
-        # Haal data op (100 dagen voor indicatoren)
         data = yf.download(ticker, period="100d", interval="1d", progress=False)
         if data.empty or len(data) < 30: return None
         
-        # --- 1. RSI (Momentum) ---
+        # RSI
         delta = data['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
+        rsi = 100 - (100 / (1 + (gain / loss)))
         current_rsi = rsi.iloc[-1]
 
-        # --- 2. AI Trend (Linear Regression) ---
+        # Trend & ATR
         current_price = float(data['Close'].iloc[-1])
         y = data['Close'].values.reshape(-1, 1)
         X = np.array(range(len(y))).reshape(-1, 1)
         model = LinearRegression().fit(X, y)
         ai_target = float(model.predict(np.array([[len(y)]]))[0][0])
-        trend_move = ((ai_target - current_price) / current_price) * 100
-
-        # --- 3. Volatility & Risk (ATR) ---
-        high_low = data['High'] - data['Low']
-        high_close = np.abs(data['High'] - data['Close'].shift())
-        low_close = np.abs(data['Low'] - data['Close'].shift())
-        ranges = pd.concat([high_low, high_close, low_close], axis=1)
-        atr = np.max(ranges, axis=1).rolling(14).mean().iloc[-1]
         
-        stop_loss = current_price - (atr * 2)
-        target_price = current_price + (atr * 3) # Swing target: 3x de ATR
-        risk_reward = (target_price - current_price) / (current_price - stop_loss)
-
-        # --- AI SWING LOGIC ---
+        high_low = data['High'] - data['Low']
+        atr = high_low.rolling(14).mean().iloc[-1]
+        
+        # Score
         score = 0
-        reasons = []
-
-        if trend_move > 0: 
-            score += 1
-            reasons.append("Positive AI Trend")
-        if current_rsi < 40: 
-            score += 2  # Sterke koop-factor (oversold)
-            reasons.append("Oversold (RSI < 40)")
-        elif current_rsi > 70:
-            score -= 2  # Risicovol (overbought)
-            reasons.append("Overbought (RSI > 70)")
-        if data['Volume'].iloc[-1] > data['Volume'].rolling(20).mean().iloc[-1]:
-            score += 1
-            reasons.append("High Volume Confirmation")
+        if ai_target > current_price: score += 1
+        if current_rsi < 40: score += 2
+        elif current_rsi > 70: score -= 2
 
         status = "HOLD"
-        if score >= 3: status = "STRONG BUY"
-        elif score >= 1: status = "BUY"
-        elif score <= -2: status = "STRONG SELL"
+        if score >= 2: status = "STRONG BUY"
+        elif score == 1: status = "BUY"
+        elif score <= -1: status = "SELL"
 
         return {
-            "price": current_price, "target": target_price, "stop": stop_loss,
-            "rsi": current_rsi, "status": status, "rr": risk_reward, "reasons": reasons
+            "Ticker": ticker, "Signal": status, "Price": f"${current_price:.2f}",
+            "Target": f"${ai_target:.2f}", "RSI": round(current_rsi, 1),
+            "Stop": f"${(current_price - (atr*2)):.2f}"
         }
-    except Exception as e:
+    except:
         return None
 
-# --- UI Layout ---
+# --- SIDEBAR ---
+st.sidebar.header("⚙️ Control Panel")
+# Standaard lijst als de gebruiker niks invult
+default_list = "AAPL, TSLA, NVDA, AMD, MSFT, META, AMZN, GOOGL, NFLX, BTC-USD"
+user_list = st.sidebar.text_area("Watchlist (comma separated)", default_list)
+tickers = [t.strip().upper() for t in user_list.split(",")]
+
+# DE START KNOP (Nu prominent in de sidebar)
+run_scan = st.sidebar.button("🚀 START AI SCANNER", use_container_width=True)
+
+# --- MAIN PAGE ---
 st.title("🏹 AI Multi-Factor Swing Scanner")
 
-tab1, tab2 = st.tabs(["🎯 Deep Swing Analysis", "📋 Multi-Stock Scanner"])
-
-with tab1:
-    t_input = st.text_input("Analyze Ticker", "TSLA").upper().strip()
-    res = analyze_swing_trade(t_input)
+if run_scan:
+    st.subheader("📊 Market Scan Results")
+    results = []
     
-    if res:
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Current Price", f"${res['price']:.2f}")
-        col2.metric("Swing Target", f"${res['target']:.2f}")
-        col3.metric("RSI (Momentum)", f"{res['rsi']:.1f}")
-        col4.metric("Risk/Reward Ratio", f"{res['rr']:.2f}")
-
-        st.info(f"**AI Verdict:** {res['status']}")
-        st.write("**Key Factors:** " + ", ".join(res['reasons']))
+    # Voortgangsbalk
+    progress_bar = st.progress(0)
+    for i, t in enumerate(tickers):
+        res = analyze_swing_trade(t)
+        if res:
+            results.append(res)
+        progress_bar.progress((i + 1) / len(tickers))
+    
+    if results:
+        df = pd.DataFrame(results)
         
-        st.line_chart(yf.download(t_input, period="100d")['Close'])
+        # Styling voor signalen
+        def color_signal(val):
+            if val == 'STRONG BUY': return 'background-color: #0ecb81; color: white'
+            if val == 'BUY': return 'color: #0ecb81'
+            if val == 'SELL': return 'color: #f6465d'
+            return ''
 
-with tab2:
-    watchlist = st.session_state.get('watchlist', ["AAPL", "TSLA", "NVDA", "AMD", "MSFT", "META"])
-    if st.button("Run Market Swing Scan"):
-        results = []
-        for t in watchlist:
-            m = analyze_swing_trade(t)
-            if m:
-                results.append({
-                    "Ticker": t, "Signal": m['status'], "Price": f"${m['price']:.2f}",
-                    "Target": f"${m['target']:.2f}", "RSI": round(m['rsi'], 1), "R/R": round(m['rr'], 2)
-                })
-        st.dataframe(pd.DataFrame(results), use_container_width=True)
+        st.dataframe(df.style.applymap(color_signal, subset=['Signal']), use_container_width=True, height=500)
+    else:
+        st.error("No data could be retrieved. Check your tickers.")
+else:
+    st.info("👈 Enter your tickers in the sidebar and click 'START AI SCANNER' to begin.")
 
-st.caption("Swing Strategy: Entries based on RSI exhaustion and Trend confirmation. Exit at 3x ATR.")
+# Individuele check onderaan
+st.divider()
+st.subheader("🔍 Single Ticker Deep Dive")
+single_t = st.text_input("Enter one ticker for chart", "TSLA").upper()
+if st.button("Show Chart"):
+    st.line_chart(yf.download(single_t, period="100d")['Close'])
 
 
