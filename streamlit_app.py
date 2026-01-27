@@ -21,10 +21,14 @@ if ticker_input:
         # Haal data op
         data = yf.download(ticker_input, period="100d", interval="1d", progress=False)
 
-        if data is None or data.empty or len(data) < 20:
-            st.error("Niet genoeg data gevonden.")
+        if data is None or data.empty or len(data) < 30:
+            st.error("Niet genoeg data gevonden voor dit aandeel.")
         else:
+            # Data opschonen
+            data = data.copy()
             data = data.dropna()
+            
+            # Prijs ophalen als enkel getal
             current_price = float(data['Close'].iloc[-1])
             
             # --- AI Trend Berekening ---
@@ -43,25 +47,25 @@ if ticker_input:
                 target_price = predicted_price
                 if target_price > current_price:
                     advice = "BUY"
-                    buy_reason = "De AI trendlijn wijst op een opwaartse beweging in de komende dagen."
+                    buy_reason = "De AI trendlijn wijst op een opwaartse beweging."
                 else:
-                    advice = "SELL/HOLD"
+                    advice = "HOLD"
 
             elif strategy == "Swingtrade":
-                # Veilige RSI berekening
+                # Super stabiele RSI berekening
                 delta = data['Close'].diff()
                 up = delta.clip(lower=0)
                 down = -1 * delta.clip(upper=0)
                 ema_up = up.ewm(com=13, adjust=False).mean()
                 ema_down = down.ewm(com=13, adjust=False).mean()
                 rs = ema_up / ema_down
-                rsi = 100 - (100 / (1 + rs.iloc[-1]))
+                rsi_value = float(100 - (100 / (1 + rs.iloc[-1])))
                 
                 target_price = current_price * 1.08
                 stop_loss_pct = 4.0
-                if rsi < 40:
+                if rsi_value < 45:
                     advice = "BUY"
-                    buy_reason = f"De RSI staat op {rsi:.1f} (Oversold), wat duidt op een sterke koopkans voor een swing."
+                    buy_reason = f"De RSI staat op {rsi_value:.1f} (Oversold). Dit wijst op een mogelijke opwaartse swing."
                 else:
                     advice = "HOLD"
 
@@ -71,7 +75,7 @@ if ticker_input:
                 stop_loss_pct = 3.0
                 if current_price >= recent_high:
                     advice = "BUY"
-                    buy_reason = f"De koers is door de weerstand van ${recent_high:.2f} gebroken (20-daags hoogpunt)."
+                    buy_reason = f"De koers is door de 20-daagse weerstand van ${recent_high:.2f} gebroken."
                 else:
                     advice = "HOLD"
 
@@ -81,7 +85,7 @@ if ticker_input:
                 stop_loss_pct = 7.0
                 if current_price < (sma50 * 0.92):
                     advice = "BUY"
-                    buy_reason = "De koers ligt meer dan 8% onder het 50-daags gemiddelde. Een herstel naar het midden is waarschijnlijk."
+                    buy_reason = "De koers is overmatig gedaald ten opzichte van het 50-daags gemiddelde (Mean Reversion)."
                 else:
                     advice = "HOLD"
 
@@ -93,20 +97,20 @@ if ticker_input:
 
             st.divider()
 
-            # --- ADVIER EN UITLEG ---
+            # --- ADVIES EN UITLEG ---
             if advice == "BUY":
                 st.success(f"**ADVIES: {advice}**")
                 st.write(f"👉 **Waarom kopen?** {buy_reason}")
             else:
                 st.warning(f"**ADVIES: {advice}**")
-                st.write("De AI ziet op dit moment geen optimaal instappunt voor deze strategie.")
+                st.write(f"De AI ziet voor de methode '{strategy}' momenteel geen koopsignaal.")
 
             st.line_chart(data['Close'])
 
     except Exception as e:
         st.error(f"Fout bij berekening: {e}")
 
-st.caption("Gebruik deze AI-analyse als ondersteuning bij uw eigen onderzoek.")
+st.caption("AI-analyse gebaseerd op historische data.")
 
 
 
