@@ -33,21 +33,26 @@ def get_live_sentiment(ticker):
 
 if ticker_input:
     try:
-        data = yf.download(ticker_input, period="100d", interval="1d", progress=False)
-        if data is None or data.empty or len(data) < 50:
+        # 1. Fetch Data and Flatten MultiIndex if necessary
+        raw_data = yf.download(ticker_input, period="100d", interval="1d", progress=False)
+        
+        if raw_data is None or raw_data.empty or len(raw_data) < 50:
             st.error("Not enough data found.")
         else:
-            data = data.copy().dropna()
+            # Fix: Ensure we have a clean 1D Index (removes the 'Ticker' level from columns)
+            data = raw_data.copy()
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            
+            data = data.dropna()
             current_price = float(data['Close'].iloc[-1])
             
-            # --- 1. TECHNICAL CALCULATIONS ---
-            # A. Basis Trend
+            # --- 2. TECHNICAL CALCULATIONS ---
             y_reg = data['Close'].values.reshape(-1, 1)
             X_reg = np.array(range(len(y_reg))).reshape(-1, 1)
             model = LinearRegression().fit(X_reg, y_reg)
             pred = float(model.predict(np.array([[len(y_reg)]]))[0][0])
             
-            # B. RSI (Swingtrade)
             delta = data['Close'].diff()
             up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
             ema_up = up.ewm(com=13, adjust=False).mean()
@@ -55,27 +60,29 @@ if ticker_input:
             rs = ema_up / ema_down
             rsi = float(100 - (100 / (1 + rs.iloc[-1])))
             
-            # C. Levels (Breakout & Reversal)
             recent_high = float(data['High'].iloc[-21:-1].max())
             sma50 = float(data['Close'].iloc[-50:].mean())
 
-            # --- 2. AI CALCULATIONS ---
+            # --- 3. AI CALCULATIONS ---
             ensemble_score = int(72 + (12 if pred > current_price else -8) + (10 if rsi < 45 else 0))
             last_5_days = data['Close'].iloc[-5:].pct_change().sum()
             lstm_score = int(65 + (last_5_days * 150))
             sentiment_score, sentiment_status = get_live_sentiment(ticker_input)
 
-            # --- 3. SUMMARY BOX ---
+            # --- 4. SUMMARY BOX ---
             avg_score = (ensemble_score + lstm_score + sentiment_score) / 3
             rec_color = "#00C851" if avg_score > 75 else "#FFBB33" if avg_score > 50 else "#ff4444"
             st.markdown(f'<div style="background-color:{rec_color};padding:15px;border-radius:10px;text-align:center;"><h2 style="color:white;margin:0;">FINAL VERDICT: {"BUY" if avg_score > 65 else "HOLD"} ({avg_score:.1f}%)</h2></div>', unsafe_allow_html=True)
 
-            # --- 4. CHART WITH BUY MARKERS ---
-            # Create a simple Buy Signal column for the chart
+            # --- 5. CHART FIX ---
+            # Create the signal column
             data['Buy_Signal'] = np.where((pred > data['Close']) | (rsi < 45) | (data['Close'] >= recent_high), data['Close'], np.nan)
-            st.line_chart(data[['Close', 'Buy_Signal']])
+            
+            # Explicitly select only the columns we need for the chart
+            chart_data = data[['Close', 'Buy_Signal']]
+            st.line_chart(chart_data)
 
-            # --- 5. COMBINED STRATEGY TABLE ---
+            # --- 6. COMBINED STRATEGY TABLE ---
             st.subheader("🚀 Comprehensive Strategy Scoreboard")
             
             combined_methods = [
@@ -90,7 +97,8 @@ if ticker_input:
             
             df_all = pd.DataFrame(combined_methods)
             def style_status(v):
-                return 'background-color: #00C851; color: white; font-weight: bold;' if v == 'BUY' else 'background-color: #FFBB33; color: black;'
+                if v == 'BUY': return 'background-color: #00C851; color: white; font-weight: bold;'
+                return 'background-color: #FFBB33; color: black;'
             
             st.table(df_all.style.applymap(style_status, subset=['Status']))
 
@@ -98,6 +106,7 @@ if ticker_input:
         st.error(f"Error: {e}")
 
 st.caption("AI Disclaimer: Combined Technical and AI analysis. Not financial advice.")
+
 
 
 
