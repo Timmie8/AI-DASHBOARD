@@ -46,7 +46,7 @@ if ticker_input:
             data = data.dropna()
             current_price = float(data['Close'].iloc[-1])
             
-            # --- 2. LOGICAL CALCULATIONS ---
+            # --- 2. TECHNICAL CALCULATIONS ---
             high_low = data['High'] - data['Low']
             high_close = np.abs(data['High'] - data['Close'].shift())
             low_close = np.abs(data['Low'] - data['Close'].shift())
@@ -78,23 +78,15 @@ if ticker_input:
             # --- 4. PRICE METRIC ---
             st.metric(label=f"Current {ticker_input} Price", value=f"${current_price:.2f}", delta=f"{((current_price/data['Close'].iloc[-2])-1)*100:.2f}%")
 
-            # --- 5. CHART WITH BUY ARROWS & PRICE LINE ---
-            # Create a clean DataFrame for the chart
+            # --- 5. CLEAN CHART ---
             chart_df = pd.DataFrame(index=data.index)
             chart_df['Price'] = data['Close']
-            chart_df['Current Price Level'] = current_price
+            chart_df['Current Level'] = current_price
+            # Alleen markeren als Buy Signaal aanwezig is
+            chart_df['BUY Signals'] = np.where((pred > data['Close']) & (rsi < 55), data['Close'], np.nan)
             
-            # Determine Buy Signals (Trend + RSI check)
-            chart_df['BUY_Arrow'] = np.where((pred > data['Close']) & (rsi < 55), data['Close'], np.nan)
-            
-            st.subheader("📈 Price Chart & AI Buy Signals")
-            # line_chart for price and level, scatter for the arrow-points
-            st.line_chart(chart_df[['Price', 'Current Price Level']], color=["#1f77b4", "#ff4b4b"])
-            
-            # Toon alleen de 'pijlen' (punten) als er data is
-            if not chart_df['BUY_Arrow'].isna().all():
-                st.write("🟢 Green dots above indicate AI Buy Signals detected on those dates.")
-                st.scatter_chart(chart_df['BUY_Arrow'], color="#00C851")
+            st.subheader("📈 Price Action & AI Buy Signals")
+            st.line_chart(chart_df, color=["#1f77b4", "#ff4b4b", "#00C851"])
 
             # --- 6. STRATEGY TABLE ---
             st.subheader("🚀 Comprehensive Strategy Scoreboard")
@@ -127,7 +119,8 @@ if ticker_input:
     except Exception as e:
         st.error(f"Error: {e}")
 
-st.caption("AI Disclaimer: Buy markers and technical levels are for educational purposes. Always trade with caution.")
+st.caption("AI Disclaimer: Analysis uses live data and volatility-based metrics.")
+
 
 
 
