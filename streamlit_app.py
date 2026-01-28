@@ -46,8 +46,7 @@ if ticker_input:
             data = data.dropna()
             current_price = float(data['Close'].iloc[-1])
             
-            # --- 2. LOGICAL CALCULATIONS (ATR for Volatility) ---
-            # Calculate ATR (Average True Range) for a logical Stop Loss
+            # --- 2. LOGICAL CALCULATIONS ---
             high_low = data['High'] - data['Low']
             high_close = np.abs(data['High'] - data['Close'].shift())
             low_close = np.abs(data['Low'] - data['Close'].shift())
@@ -55,13 +54,11 @@ if ticker_input:
             true_range = np.max(ranges, axis=1)
             atr = true_range.rolling(14).mean().iloc[-1]
             
-            # A. Trend Logic
             y_reg = data['Close'].values.reshape(-1, 1)
             X_reg = np.array(range(len(y_reg))).reshape(-1, 1)
             model = LinearRegression().fit(X_reg, y_reg)
             pred = float(model.predict(np.array([[len(y_reg)]]))[0][0])
             
-            # B. RSI & Levels
             delta = data['Close'].diff()
             up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
             ema_up = up.ewm(com=13, adjust=False).mean()
@@ -84,11 +81,19 @@ if ticker_input:
             rec_color = "#00C851" if avg_score > 75 else "#FFBB33" if avg_score > 50 else "#ff4444"
             st.markdown(f'<div style="background-color:{rec_color};padding:15px;border-radius:10px;text-align:center;"><h2 style="color:white;margin:0;">FINAL VERDICT: {"BUY" if avg_score > 65 else "HOLD"} ({avg_score:.1f}%)</h2></div>', unsafe_allow_html=True)
 
-            # --- 5. CHART ---
+            # --- 5. ENHANCED CHART ---
+            # Create Current Price Line
+            data['Current_Price'] = current_price
+            
+            # Create BUY Markers (Triangle logic)
+            # A buy signal is triggered if trend is up and RSI is low
             data['BUY_Signal'] = np.where((pred > data['Close']) & (rsi < 60), data['Close'], np.nan)
-            st.line_chart(data[['Close', 'BUY_Signal']])
+            
+            # Displaying columns: Price, Current Price Level, and Signal Dots
+            st.subheader(f"📈 {ticker_input} Price Action & AI Signals")
+            st.line_chart(data[['Close', 'Current_Price', 'BUY_Signal']], color=["#1f77b4", "#ff4b4b", "#00C851"])
 
-            # --- 6. STRATEGY TABLE WITH LOGICAL TARGETS/STOPS ---
+            # --- 6. STRATEGY TABLE ---
             st.subheader("🚀 Comprehensive Strategy Scoreboard")
             
             def get_row(method_name, category, is_buy, signal_val, target, stop):
@@ -101,9 +106,6 @@ if ticker_input:
                     "Stop Loss": f"${stop:.2f}" if is_buy else "-"
                 }
 
-            # Logica: 
-            # Stop Loss = Current Price - (1.5 * ATR) -> Ruimte op basis van volatiliteit
-            # Target = Gebaseerd op specifieke technische doelen
             logical_stop = current_price - (1.5 * atr)
 
             combined_methods = [
@@ -122,7 +124,8 @@ if ticker_input:
     except Exception as e:
         st.error(f"Error: {e}")
 
-st.caption("AI Disclaimer: Targets & Stops calculated using ATR Volatility and Support/Resistance levels.")
+st.caption("AI Disclaimer: Analysis uses live data and ATR volatility for stops/targets.")
+
 
 
 
