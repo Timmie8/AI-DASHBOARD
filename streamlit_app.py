@@ -5,6 +5,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
 
 # --- Layout ---
 st.set_page_config(page_title="AI Pro Stock Dashboard", layout="wide")
@@ -34,19 +35,33 @@ def get_live_sentiment(ticker):
 if ticker_input:
     try:
         # 1. Fetch Data
-        raw_data = yf.download(ticker_input, period="100d", interval="1d", progress=False)
+        ticker_obj = yf.Ticker(ticker_input)
+        raw_data = ticker_obj.history(period="100d")
         
         if raw_data is None or raw_data.empty or len(raw_data) < 50:
             st.error("Not enough data found.")
         else:
             data = raw_data.copy()
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
-            
-            data = data.dropna()
             current_price = float(data['Close'].iloc[-1])
             
-            # --- 2. TECHNICAL CALCULATIONS ---
+            # --- 2. EARNINGS ALERT LOGIC ---
+            try:
+                calendar = ticker_obj.calendar
+                # Check of 'Earnings Date' bestaat in de nieuwe yfinance structuur
+                if 'Earnings Date' in calendar and calendar['Earnings Date']:
+                    next_earnings = calendar['Earnings Date'][0]
+                    days_to_earnings = (next_earnings.date() - datetime.now().date()).days
+                    
+                    if 0 <= days_to_earnings <= 2:
+                        st.error(f"🚨 ALERT: Earnings in {days_to_earnings} days ({next_earnings.date()})! High Volatility Expected.")
+                    else:
+                        st.info(f"📅 Next Earnings Date: {next_earnings.date()} ({days_to_earnings} days away)")
+                else:
+                    st.caption("No upcoming earnings date found.")
+            except:
+                st.caption("Earnings data currently unavailable.")
+
+            # --- 3. TECHNICAL CALCULATIONS ---
             high_low = data['High'] - data['Low']
             high_close = np.abs(data['High'] - data['Close'].shift())
             low_close = np.abs(data['Low'] - data['Close'].shift())
@@ -69,26 +84,26 @@ if ticker_input:
             recent_high = float(data['High'].iloc[-21:-1].max())
             sma50 = float(data['Close'].iloc[-50:].mean())
 
-            # --- 3. AI SCORING ---
+            # --- 4. AI SCORING ---
             ensemble_score = int(72 + (12 if pred > current_price else -8) + (10 if rsi < 45 else 0))
             last_5_days = data['Close'].iloc[-5:].pct_change().sum()
             lstm_score = int(65 + (last_5_days * 150))
             sentiment_score, sentiment_status = get_live_sentiment(ticker_input)
 
-            # --- 4. PRICE METRIC ---
-            st.metric(label=f"Current {ticker_input} Price", value=f"${current_price:.2f}", delta=f"{((current_price/data['Close'].iloc[-2])-1)*100:.2f}%")
+            # --- 5. PRICE METRIC ---
+            st.metric(label=f"Current {ticker_input} Price", value=f"${current_price:.2f}", 
+                      delta=f"{((current_price/data['Close'].iloc[-2])-1)*100:.2f}%")
 
-            # --- 5. CLEAN CHART ---
+            # --- 6. CHART ---
             chart_df = pd.DataFrame(index=data.index)
             chart_df['Price'] = data['Close']
             chart_df['Current Level'] = current_price
-            # Alleen markeren als Buy Signaal aanwezig is
             chart_df['BUY Signals'] = np.where((pred > data['Close']) & (rsi < 55), data['Close'], np.nan)
             
             st.subheader("📈 Price Action & AI Buy Signals")
             st.line_chart(chart_df, color=["#1f77b4", "#ff4b4b", "#00C851"])
 
-            # --- 6. STRATEGY TABLE ---
+            # --- 7. STRATEGY TABLE (SORTED) ---
             st.subheader("🚀 Comprehensive Strategy Scoreboard")
             
             def get_row(method_name, category, is_buy, signal_val, target, stop):
@@ -114,12 +129,16 @@ if ticker_input:
             ]
             
             df_all = pd.DataFrame(combined_methods)
+            # Sorteer op Status zodat BUY bovenaan staat
+            df_all = df_all.sort_values(by="Status", ascending=True)
+            
             st.table(df_all.style.applymap(lambda v: 'background-color: #00C851; color: white; font-weight: bold;' if v == 'BUY' else 'background-color: #FFBB33; color: black;', subset=['Status']))
 
     except Exception as e:
         st.error(f"Error: {e}")
 
-st.caption("AI Disclaimer: Analysis uses live data and volatility-based metrics.")
+st.caption("AI Disclaimer: Earnings dates are sourced from Yahoo Finance. High volatility is common around these dates.")
+
 
 
 
