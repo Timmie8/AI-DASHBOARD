@@ -33,13 +33,12 @@ def get_live_sentiment(ticker):
 
 if ticker_input:
     try:
-        # 1. Fetch Data and Flatten MultiIndex if necessary
+        # 1. Fetch Data
         raw_data = yf.download(ticker_input, period="100d", interval="1d", progress=False)
         
         if raw_data is None or raw_data.empty or len(raw_data) < 50:
             st.error("Not enough data found.")
         else:
-            # Fix: Ensure we have a clean 1D Index (removes the 'Ticker' level from columns)
             data = raw_data.copy()
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.get_level_values(0)
@@ -47,12 +46,22 @@ if ticker_input:
             data = data.dropna()
             current_price = float(data['Close'].iloc[-1])
             
-            # --- 2. TECHNICAL CALCULATIONS ---
+            # --- 2. LOGICAL CALCULATIONS (ATR for Volatility) ---
+            # Calculate ATR (Average True Range) for a logical Stop Loss
+            high_low = data['High'] - data['Low']
+            high_close = np.abs(data['High'] - data['Close'].shift())
+            low_close = np.abs(data['Low'] - data['Close'].shift())
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            true_range = np.max(ranges, axis=1)
+            atr = true_range.rolling(14).mean().iloc[-1]
+            
+            # A. Trend Logic
             y_reg = data['Close'].values.reshape(-1, 1)
             X_reg = np.array(range(len(y_reg))).reshape(-1, 1)
             model = LinearRegression().fit(X_reg, y_reg)
             pred = float(model.predict(np.array([[len(y_reg)]]))[0][0])
             
+            # B. RSI & Levels
             delta = data['Close'].diff()
             up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
             ema_up = up.ewm(com=13, adjust=False).mean()
@@ -61,9 +70,10 @@ if ticker_input:
             rsi = float(100 - (100 / (1 + rs.iloc[-1])))
             
             recent_high = float(data['High'].iloc[-21:-1].max())
+            recent_low = float(data['Low'].iloc[-21:-1].min())
             sma50 = float(data['Close'].iloc[-50:].mean())
 
-            # --- 3. AI CALCULATIONS ---
+            # --- 3. AI SCORING ---
             ensemble_score = int(72 + (12 if pred > current_price else -8) + (10 if rsi < 45 else 0))
             last_5_days = data['Close'].iloc[-5:].pct_change().sum()
             lstm_score = int(65 + (last_5_days * 150))
@@ -74,38 +84,45 @@ if ticker_input:
             rec_color = "#00C851" if avg_score > 75 else "#FFBB33" if avg_score > 50 else "#ff4444"
             st.markdown(f'<div style="background-color:{rec_color};padding:15px;border-radius:10px;text-align:center;"><h2 style="color:white;margin:0;">FINAL VERDICT: {"BUY" if avg_score > 65 else "HOLD"} ({avg_score:.1f}%)</h2></div>', unsafe_allow_html=True)
 
-            # --- 5. CHART FIX ---
-            # Create the signal column
-            data['Buy_Signal'] = np.where((pred > data['Close']) | (rsi < 45) | (data['Close'] >= recent_high), data['Close'], np.nan)
-            
-            # Explicitly select only the columns we need for the chart
-            chart_data = data[['Close', 'Buy_Signal']]
-            st.line_chart(chart_data)
+            # --- 5. CHART ---
+            data['BUY_Signal'] = np.where((pred > data['Close']) & (rsi < 60), data['Close'], np.nan)
+            st.line_chart(data[['Close', 'BUY_Signal']])
 
-            # --- 6. COMBINED STRATEGY TABLE ---
+            # --- 6. STRATEGY TABLE WITH LOGICAL TARGETS/STOPS ---
             st.subheader("🚀 Comprehensive Strategy Scoreboard")
             
+            def get_row(method_name, category, is_buy, signal_val, target, stop):
+                return {
+                    "Category": category,
+                    "Method": method_name,
+                    "Status": "BUY" if is_buy else "HOLD",
+                    "Signal": signal_val,
+                    "Target": f"${target:.2f}" if is_buy else "-",
+                    "Stop Loss": f"${stop:.2f}" if is_buy else "-"
+                }
+
+            # Logica: 
+            # Stop Loss = Current Price - (1.5 * ATR) -> Ruimte op basis van volatiliteit
+            # Target = Gebaseerd op specifieke technische doelen
+            logical_stop = current_price - (1.5 * atr)
+
             combined_methods = [
-                {"Category": "AI", "Method": "Ensemble Learning", "Status": "BUY" if ensemble_score > 75 else "HOLD", "Signal": f"{ensemble_score}% Score"},
-                {"Category": "AI", "Method": "LSTM Deep Learning", "Status": "BUY" if lstm_score > 70 else "HOLD", "Signal": f"{lstm_score}% Score"},
-                {"Category": "AI", "Method": "Sentiment Analysis", "Status": "BUY" if sentiment_score > 75 else "HOLD", "Signal": sentiment_status},
-                {"Category": "Tech", "Method": "Basis Trend", "Status": "BUY" if pred > current_price else "HOLD", "Signal": f"Target ${pred:.2f}"},
-                {"Category": "Tech", "Method": "Swingtrade (RSI)", "Status": "BUY" if rsi < 45 else "HOLD", "Signal": f"RSI: {rsi:.1f}"},
-                {"Category": "Tech", "Method": "Breakout", "Status": "BUY" if current_price >= recent_high else "HOLD", "Signal": f"High: ${recent_high:.2f}"},
-                {"Category": "Tech", "Method": "Reversal", "Status": "BUY" if current_price < (sma50 * 0.92) else "HOLD", "Signal": "Mean Reversion"}
+                get_row("Ensemble Learning", "AI", ensemble_score > 75, f"{ensemble_score}% Score", current_price + (3 * atr), logical_stop),
+                get_row("LSTM Deep Learning", "AI", lstm_score > 70, f"{lstm_score}% Score", current_price + (4 * atr), logical_stop),
+                get_row("Sentiment Analysis", "AI", sentiment_score > 75, sentiment_status, current_price + (2 * atr), current_price - atr),
+                get_row("Basis Trend", "Tech", pred > current_price, f"Target ${pred:.2f}", pred, logical_stop),
+                get_row("Swingtrade (RSI)", "Tech", rsi < 45, f"RSI: {rsi:.1f}", recent_high, recent_low),
+                get_row("Breakout", "Tech", current_price >= recent_high, f"High: ${recent_high:.2f}", current_price + (3 * atr), recent_high - (0.5 * atr)),
+                get_row("Reversal", "Tech", current_price < (sma50 * 0.92), "Mean Reversion", sma50, current_price - (2 * atr))
             ]
             
             df_all = pd.DataFrame(combined_methods)
-            def style_status(v):
-                if v == 'BUY': return 'background-color: #00C851; color: white; font-weight: bold;'
-                return 'background-color: #FFBB33; color: black;'
-            
-            st.table(df_all.style.applymap(style_status, subset=['Status']))
+            st.table(df_all.style.applymap(lambda v: 'background-color: #00C851; color: white; font-weight: bold;' if v == 'BUY' else 'background-color: #FFBB33; color: black;', subset=['Status']))
 
     except Exception as e:
         st.error(f"Error: {e}")
 
-st.caption("AI Disclaimer: Combined Technical and AI analysis. Not financial advice.")
+st.caption("AI Disclaimer: Targets & Stops calculated using ATR Volatility and Support/Resistance levels.")
 
 
 
