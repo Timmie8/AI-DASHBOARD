@@ -67,7 +67,6 @@ if ticker_input:
             rsi = float(100 - (100 / (1 + rs.iloc[-1])))
             
             recent_high = float(data['High'].iloc[-21:-1].max())
-            recent_low = float(data['Low'].iloc[-21:-1].min())
             sma50 = float(data['Close'].iloc[-50:].mean())
 
             # --- 3. AI SCORING ---
@@ -76,22 +75,26 @@ if ticker_input:
             lstm_score = int(65 + (last_5_days * 150))
             sentiment_score, sentiment_status = get_live_sentiment(ticker_input)
 
-            # --- 4. SUMMARY BOX ---
-            avg_score = (ensemble_score + lstm_score + sentiment_score) / 3
-            rec_color = "#00C851" if avg_score > 75 else "#FFBB33" if avg_score > 50 else "#ff4444"
-            st.markdown(f'<div style="background-color:{rec_color};padding:15px;border-radius:10px;text-align:center;"><h2 style="color:white;margin:0;">FINAL VERDICT: {"BUY" if avg_score > 65 else "HOLD"} ({avg_score:.1f}%)</h2></div>', unsafe_allow_html=True)
+            # --- 4. PRICE METRIC ---
+            st.metric(label=f"Current {ticker_input} Price", value=f"${current_price:.2f}", delta=f"{((current_price/data['Close'].iloc[-2])-1)*100:.2f}%")
 
-            # --- 5. ENHANCED CHART ---
-            # Create Current Price Line
-            data['Current_Price'] = current_price
+            # --- 5. CHART WITH BUY ARROWS & PRICE LINE ---
+            # Create a clean DataFrame for the chart
+            chart_df = pd.DataFrame(index=data.index)
+            chart_df['Price'] = data['Close']
+            chart_df['Current Price Level'] = current_price
             
-            # Create BUY Markers (Triangle logic)
-            # A buy signal is triggered if trend is up and RSI is low
-            data['BUY_Signal'] = np.where((pred > data['Close']) & (rsi < 60), data['Close'], np.nan)
+            # Determine Buy Signals (Trend + RSI check)
+            chart_df['BUY_Arrow'] = np.where((pred > data['Close']) & (rsi < 55), data['Close'], np.nan)
             
-            # Displaying columns: Price, Current Price Level, and Signal Dots
-            st.subheader(f"📈 {ticker_input} Price Action & AI Signals")
-            st.line_chart(data[['Close', 'Current_Price', 'BUY_Signal']], color=["#1f77b4", "#ff4b4b", "#00C851"])
+            st.subheader("📈 Price Chart & AI Buy Signals")
+            # line_chart for price and level, scatter for the arrow-points
+            st.line_chart(chart_df[['Price', 'Current Price Level']], color=["#1f77b4", "#ff4b4b"])
+            
+            # Toon alleen de 'pijlen' (punten) als er data is
+            if not chart_df['BUY_Arrow'].isna().all():
+                st.write("🟢 Green dots above indicate AI Buy Signals detected on those dates.")
+                st.scatter_chart(chart_df['BUY_Arrow'], color="#00C851")
 
             # --- 6. STRATEGY TABLE ---
             st.subheader("🚀 Comprehensive Strategy Scoreboard")
@@ -113,7 +116,7 @@ if ticker_input:
                 get_row("LSTM Deep Learning", "AI", lstm_score > 70, f"{lstm_score}% Score", current_price + (4 * atr), logical_stop),
                 get_row("Sentiment Analysis", "AI", sentiment_score > 75, sentiment_status, current_price + (2 * atr), current_price - atr),
                 get_row("Basis Trend", "Tech", pred > current_price, f"Target ${pred:.2f}", pred, logical_stop),
-                get_row("Swingtrade (RSI)", "Tech", rsi < 45, f"RSI: {rsi:.1f}", recent_high, recent_low),
+                get_row("Swingtrade (RSI)", "Tech", rsi < 45, f"RSI: {rsi:.1f}", recent_high, current_price - (1.2 * atr)),
                 get_row("Breakout", "Tech", current_price >= recent_high, f"High: ${recent_high:.2f}", current_price + (3 * atr), recent_high - (0.5 * atr)),
                 get_row("Reversal", "Tech", current_price < (sma50 * 0.92), "Mean Reversion", sma50, current_price - (2 * atr))
             ]
@@ -124,7 +127,8 @@ if ticker_input:
     except Exception as e:
         st.error(f"Error: {e}")
 
-st.caption("AI Disclaimer: Analysis uses live data and ATR volatility for stops/targets.")
+st.caption("AI Disclaimer: Buy markers and technical levels are for educational purposes. Always trade with caution.")
+
 
 
 
